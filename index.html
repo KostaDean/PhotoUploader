@@ -52,10 +52,9 @@
       box-shadow: 0 10px 40px rgba(0,0,0,0.5);
       background: #111;
     }
-    #lightboxClose {
+    .lb-btn {
       position: absolute;
       top: 12px;
-      right: 12px;
       width: 44px;
       height: 44px;
       border-radius: 12px;
@@ -64,6 +63,12 @@
       color: #fff;
       font-size: 28px;
       line-height: 1;
+    }
+    #lightboxClose { right: 12px; }
+    #lightboxDelete {
+      left: 12px;
+      font-size: 20px;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -78,17 +83,18 @@
   </div>
 
   <div class="album" id="album"></div>
-  <div class="hint">Tap a photo to enlarge. Album is saved in your browser.</div>
+  <div class="hint">Tap a photo to enlarge. In enlarged view: left button deletes, right button closes.</div>
 
   <!-- Lightbox -->
-  <div id="lightbox">
-    <button id="lightboxClose">×</button>
+  <div id="lightbox" aria-hidden="true">
+    <button id="lightboxDelete" class="lb-btn" title="Delete photo" aria-label="Delete photo">🗑</button>
+    <button id="lightboxClose" class="lb-btn" title="Close" aria-label="Close">×</button>
     <img id="lightboxImg" alt="Enlarged photo" />
   </div>
 
 <script>
 (() => {
-  const STORAGE_KEY = "photo_album_v2";
+  const STORAGE_KEY = "photo_album_v3";
   const fileInput = document.getElementById("fileInput");
   const uploadBtn = document.getElementById("uploadBtn");
   const clearBtn = document.getElementById("clearBtn");
@@ -98,6 +104,10 @@
   const lightbox = document.getElementById("lightbox");
   const lightboxImg = document.getElementById("lightboxImg");
   const lightboxClose = document.getElementById("lightboxClose");
+  const lightboxDelete = document.getElementById("lightboxDelete");
+
+  // Track which photo is currently enlarged (index in album array)
+  let currentIndex = -1;
 
   let album = loadAlbum();
   renderAlbum();
@@ -128,25 +138,46 @@
     album = [];
     saveAlbum(album);
     renderAlbum();
+    closeLightbox();
     setStatus("Album cleared.");
   });
 
-  function openLightbox(src) {
-    lightboxImg.src = src;
+  function openLightbox(index) {
+    currentIndex = index;
+    lightboxImg.src = album[index].dataUrl;
     lightbox.style.display = "flex";
+    lightbox.setAttribute("aria-hidden", "false");
   }
 
   function closeLightbox() {
     lightbox.style.display = "none";
+    lightbox.setAttribute("aria-hidden", "true");
     lightboxImg.src = "";
+    currentIndex = -1;
+  }
+
+  function deleteCurrent() {
+    if (currentIndex < 0 || currentIndex >= album.length) return;
+    album.splice(currentIndex, 1);
+    saveAlbum(album);
+    renderAlbum();
+    closeLightbox();
+    setStatus("Photo deleted.");
   }
 
   lightboxClose.addEventListener("click", closeLightbox);
 
+  lightboxDelete.addEventListener("click", (e) => {
+    e.stopPropagation(); // don’t trigger background close
+    deleteCurrent();
+  });
+
+  // Close if you tap the dark background
   lightbox.addEventListener("click", (e) => {
     if (e.target === lightbox) closeLightbox();
   });
 
+  // Close with Escape key (desktop)
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeLightbox();
   });
@@ -164,15 +195,16 @@
       albumEl.appendChild(empty);
       return;
     }
-    for (const item of album) {
+    album.forEach((item, idx) => {
       const tile = document.createElement("div");
       tile.className = "tile";
       const img = document.createElement("img");
       img.src = item.dataUrl;
-      img.addEventListener("click", () => openLightbox(item.dataUrl));
+      img.alt = "Uploaded photo";
+      img.addEventListener("click", () => openLightbox(idx));
       tile.appendChild(img);
       albumEl.appendChild(tile);
-    }
+    });
   }
 
   function readAsDataURL(file) {
