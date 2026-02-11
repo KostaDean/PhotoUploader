@@ -70,6 +70,43 @@
       font-size: 20px;
       font-weight: 700;
     }
+
+    /* Admin panel */
+    #adminPanel {
+      display: none;
+      margin-top: 10px;
+      border: 1px solid #ddd;
+      background: #fff;
+      border-radius: 12px;
+      padding: 10px;
+      gap: 10px;
+    }
+    #adminPanel .row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    #adminPanel label { font-size: 13px; color: #333; }
+    #deleteHours {
+      width: 90px;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      font-size: 14px;
+    }
+    .pill {
+      font-size: 12px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid #ddd;
+      background: #fafafa;
+      color: #333;
+    }
+    .danger {
+      border-color: rgba(255,0,0,0.25);
+      background: rgba(255,0,0,0.05);
+    }
   </style>
 </head>
 <body>
@@ -78,12 +115,32 @@
   <div class="controls">
     <button id="uploadBtn" type="button">Upload Photo</button>
     <button id="clearBtn" type="button">Clear Album</button>
+    <button id="adminBtn" type="button" title="Admin settings">Admin</button>
     <span class="status" id="status">Ready.</span>
     <input id="fileInput" type="file" accept="image/*" />
   </div>
 
+  <div id="adminPanel" aria-label="Admin panel">
+    <div class="row">
+      <span class="pill" id="adminState">Admin: OFF</span>
+      <span class="pill" id="deleteState">Delete window: 24 hours</span>
+    </div>
+    <div class="row">
+      <label>
+        Delete window (hours):
+        <input id="deleteHours" type="number" min="0" step="1" value="24" />
+      </label>
+      <button id="saveSettingsBtn" type="button">Save Settings</button>
+      <button id="logoutAdminBtn" type="button">Admin OFF</button>
+      <span class="pill danger">Note: “Admin” is client-side only (not secure for real authentication).</span>
+    </div>
+  </div>
+
   <div class="album" id="album"></div>
-  <div class="hint">Delete button only visible for 24 hours after upload.</div>
+  <div class="hint">
+    Normal mode: delete button visible only within the delete window after upload.
+    Admin mode: delete always visible + you can change the delete window.
+  </div>
 
   <!-- Lightbox -->
   <div id="lightbox" aria-hidden="true">
@@ -94,12 +151,25 @@
 
 <script>
 (() => {
-  const STORAGE_KEY = "photo_album_v4";
-  const DELETE_WINDOW = 24 * 60 * 60 * 1000; // 24 hours in ms
+  // NOTE: This is a client-side demo. Admin mode is not secure.
+  // To "enter admin", we ask for a passcode (stored only in this file):
+  const ADMIN_PASSCODE = "admin123"; // <-- change this to whatever you want
+
+  const STORAGE_KEY = "photo_album_v5";
+  const SETTINGS_KEY = "photo_album_settings_v1";
 
   const fileInput = document.getElementById("fileInput");
   const uploadBtn = document.getElementById("uploadBtn");
   const clearBtn = document.getElementById("clearBtn");
+  const adminBtn = document.getElementById("adminBtn");
+
+  const adminPanel = document.getElementById("adminPanel");
+  const adminState = document.getElementById("adminState");
+  const deleteState = document.getElementById("deleteState");
+  const deleteHoursInput = document.getElementById("deleteHours");
+  const saveSettingsBtn = document.getElementById("saveSettingsBtn");
+  const logoutAdminBtn = document.getElementById("logoutAdminBtn");
+
   const albumEl = document.getElementById("album");
   const statusEl = document.getElementById("status");
 
@@ -110,6 +180,11 @@
 
   let currentIndex = -1;
   let album = loadAlbum();
+
+  // Settings (persisted)
+  let settings = loadSettings(); // { deleteWindowMs, adminEnabled }
+  applySettingsToUI();
+
   renderAlbum();
 
   uploadBtn.addEventListener("click", () => fileInput.click());
@@ -118,10 +193,12 @@
     const file = fileInput.files && fileInput.files[0];
     fileInput.value = "";
     if (!file) return;
+
     if (!file.type.startsWith("image/")) {
       setStatus("Please select an image file.");
       return;
     }
+
     try {
       setStatus("Uploading…");
       const dataUrl = await readAsDataURL(file);
@@ -142,17 +219,62 @@
     setStatus("Album cleared.");
   });
 
+  adminBtn.addEventListener("click", () => {
+    // Toggle panel open/close
+    adminPanel.style.display = (adminPanel.style.display === "block") ? "none" : "block";
+
+    // If not admin, offer login prompt
+    if (!settings.adminEnabled) {
+      const code = prompt("Enter admin passcode:");
+      if (code === null) return; // cancelled
+      if (code !== ADMIN_PASSCODE) {
+        setStatus("Admin passcode incorrect.");
+        return;
+      }
+      settings.adminEnabled = true;
+      saveSettings(settings);
+      applySettingsToUI();
+      setStatus("Admin enabled.");
+    } else {
+      setStatus("Admin panel opened.");
+    }
+  });
+
+  logoutAdminBtn.addEventListener("click", () => {
+    settings.adminEnabled = false;
+    saveSettings(settings);
+    applySettingsToUI();
+    setStatus("Admin disabled.");
+  });
+
+  saveSettingsBtn.addEventListener("click", () => {
+    if (!settings.adminEnabled) {
+      setStatus("Enable admin to change settings.");
+      return;
+    }
+    const hours = Number(deleteHoursInput.value);
+    if (!Number.isFinite(hours) || hours < 0) {
+      setStatus("Please enter a valid number of hours (0 or more).");
+      return;
+    }
+    settings.deleteWindowMs = Math.round(hours * 60 * 60 * 1000);
+    saveSettings(settings);
+    applySettingsToUI();
+    setStatus("Settings saved.");
+  });
+
   function openLightbox(index) {
     currentIndex = index;
     const item = album[index];
     lightboxImg.src = item.dataUrl;
 
-    // Show delete only if within 24h window
-    if (Date.now() - item.addedAt <= DELETE_WINDOW) {
-      lightboxDelete.style.display = "block";
-    } else {
-      lightboxDelete.style.display = "none";
-    }
+    // Delete visibility logic:
+    // - Admin: always show delete
+    // - Normal: show only within delete window
+    const withinWindow = (Date.now() - item.addedAt) <= settings.deleteWindowMs;
+    const showDelete = settings.adminEnabled || withinWindow;
+
+    lightboxDelete.style.display = showDelete ? "block" : "none";
 
     lightbox.style.display = "flex";
     lightbox.setAttribute("aria-hidden", "false");
@@ -167,6 +289,15 @@
 
   function deleteCurrent() {
     if (currentIndex < 0 || currentIndex >= album.length) return;
+
+    // In normal mode, enforce window even if somehow clicked
+    const item = album[currentIndex];
+    const withinWindow = (Date.now() - item.addedAt) <= settings.deleteWindowMs;
+    if (!settings.adminEnabled && !withinWindow) {
+      setStatus("Delete window expired.");
+      return;
+    }
+
     album.splice(currentIndex, 1);
     saveAlbum(album);
     renderAlbum();
@@ -178,7 +309,9 @@
 
   lightboxDelete.addEventListener("click", (e) => {
     e.stopPropagation();
-    deleteCurrent();
+    // Confirmation prompt (safer)
+    const ok = confirm("Delete this photo?");
+    if (ok) deleteCurrent();
   });
 
   lightbox.addEventListener("click", (e) => {
@@ -202,6 +335,7 @@
       albumEl.appendChild(empty);
       return;
     }
+
     album.forEach((item, idx) => {
       const tile = document.createElement("div");
       tile.className = "tile";
@@ -238,6 +372,52 @@
     } catch {
       setStatus("Local storage full.");
     }
+  }
+
+  function defaultSettings() {
+    return {
+      deleteWindowMs: 24 * 60 * 60 * 1000, // 24 hours
+      adminEnabled: false
+    };
+  }
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return defaultSettings();
+      const parsed = JSON.parse(raw) || {};
+      const base = defaultSettings();
+      // sanitize
+      if (typeof parsed.deleteWindowMs === "number" && parsed.deleteWindowMs >= 0) {
+        base.deleteWindowMs = parsed.deleteWindowMs;
+      }
+      // Always start admin off unless the user enables it again
+      base.adminEnabled = false;
+      return base;
+    } catch {
+      return defaultSettings();
+    }
+  }
+
+  function saveSettings(s) {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+        deleteWindowMs: s.deleteWindowMs
+      }));
+    } catch {
+      setStatus("Could not save settings (storage full?).");
+    }
+  }
+
+  function msToHours(ms) {
+    return Math.round((ms / (60*60*1000)) * 100) / 100;
+  }
+
+  function applySettingsToUI() {
+    const hours = msToHours(settings.deleteWindowMs);
+    deleteHoursInput.value = String(hours);
+    deleteState.textContent = "Delete window: " + hours + " hours";
+    adminState.textContent = "Admin: " + (settings.adminEnabled ? "ON" : "OFF");
   }
 })();
 </script>
