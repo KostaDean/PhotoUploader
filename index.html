@@ -83,7 +83,7 @@
   </div>
 
   <div class="album" id="album"></div>
-  <div class="hint">Tap a photo to enlarge. In enlarged view: left button deletes, right button closes.</div>
+  <div class="hint">Delete button only visible for 24 hours after upload.</div>
 
   <!-- Lightbox -->
   <div id="lightbox" aria-hidden="true">
@@ -94,7 +94,9 @@
 
 <script>
 (() => {
-  const STORAGE_KEY = "photo_album_v3";
+  const STORAGE_KEY = "photo_album_v4";
+  const DELETE_WINDOW = 24 * 60 * 60 * 1000; // 24 hours in ms
+
   const fileInput = document.getElementById("fileInput");
   const uploadBtn = document.getElementById("uploadBtn");
   const clearBtn = document.getElementById("clearBtn");
@@ -106,9 +108,7 @@
   const lightboxClose = document.getElementById("lightboxClose");
   const lightboxDelete = document.getElementById("lightboxDelete");
 
-  // Track which photo is currently enlarged (index in album array)
   let currentIndex = -1;
-
   let album = loadAlbum();
   renderAlbum();
 
@@ -144,7 +144,16 @@
 
   function openLightbox(index) {
     currentIndex = index;
-    lightboxImg.src = album[index].dataUrl;
+    const item = album[index];
+    lightboxImg.src = item.dataUrl;
+
+    // Show delete only if within 24h window
+    if (Date.now() - item.addedAt <= DELETE_WINDOW) {
+      lightboxDelete.style.display = "block";
+    } else {
+      lightboxDelete.style.display = "none";
+    }
+
     lightbox.style.display = "flex";
     lightbox.setAttribute("aria-hidden", "false");
   }
@@ -168,16 +177,14 @@
   lightboxClose.addEventListener("click", closeLightbox);
 
   lightboxDelete.addEventListener("click", (e) => {
-    e.stopPropagation(); // don’t trigger background close
+    e.stopPropagation();
     deleteCurrent();
   });
 
-  // Close if you tap the dark background
   lightbox.addEventListener("click", (e) => {
     if (e.target === lightbox) closeLightbox();
   });
 
-  // Close with Escape key (desktop)
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeLightbox();
   });
