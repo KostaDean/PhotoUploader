@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Photo Upload + Album Display</title>
+  <style>
+    body { font-family: -apple-system, system-ui, Arial, sans-serif; margin: 16px; }
+    h1 { margin: 0 0 10px; font-size: 18px; }
+    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    button { padding: 10px 14px; border: 1px solid #ccc; border-radius: 10px; background: #fff; font-weight: 600; }
+    button:active { transform: scale(0.99); }
+    .status { font-size: 13px; color: #444; }
+    .album {
+      border: 1px solid #ddd; border-radius: 12px; padding: 12px;
+      min-height: 120px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+      gap: 10px;
+      background: #fafafa;
+    }
+    .tile {
+      border: 1px solid #e1e1e1; border-radius: 12px; overflow: hidden;
+      background: #fff;
+      display: flex; align-items: center; justify-content: center;
+      aspect-ratio: 1 / 1;
+    }
+    .tile img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .hint { font-size: 12px; color: #666; margin-top: 10px; }
+    input[type="file"] { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Photo Upload + Album Display</h1>
+
+  <div class="controls">
+    <button id="uploadBtn" type="button">Upload Photo</button>
+    <button id="clearBtn" type="button" title="Clears saved album">Clear Album</button>
+    <span class="status" id="status">Ready.</span>
+    <input id="fileInput" type="file" accept="image/*" />
+  </div>
+
+  <div class="album" id="album" aria-label="Album display panel"></div>
+  <div class="hint">New photos are appended last. Album is saved in your browser.</div>
+
+<script>
+(() => {
+  const STORAGE_KEY = "photo_album_v1";
+  const fileInput = document.getElementById("fileInput");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const albumEl = document.getElementById("album");
+  const statusEl = document.getElementById("status");
+
+  let album = loadAlbum();
+  renderAlbum();
+
+  uploadBtn.addEventListener("click", () => fileInput.click());
+
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setStatus("Please select an image file.");
+      return;
+    }
+    try {
+      setStatus("Uploading…");
+      const dataUrl = await readAsDataURL(file);
+      album.push({ dataUrl, addedAt: Date.now() });
+      saveAlbum(album);
+      renderAlbum();
+      setStatus("Uploaded and added to album.");
+    } catch {
+      setStatus("Upload failed.");
+    }
+  });
+
+  clearBtn.addEventListener("click", () => {
+    album = [];
+    saveAlbum(album);
+    renderAlbum();
+    setStatus("Album cleared.");
+  });
+
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  function renderAlbum() {
+    albumEl.innerHTML = "";
+    if (album.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.color = "#666";
+      empty.style.fontSize = "13px";
+      empty.textContent = "No photos yet. Tap “Upload Photo” to add one.";
+      empty.style.gridColumn = "1 / -1";
+      albumEl.appendChild(empty);
+      return;
+    }
+    for (const item of album) {
+      const tile = document.createElement("div");
+      tile.className = "tile";
+      const img = document.createElement("img");
+      img.src = item.dataUrl;
+      tile.appendChild(img);
+      albumEl.appendChild(tile);
+    }
+  }
+
+  function readAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadAlbum() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveAlbum(arr) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+    } catch {
+      setStatus("Local storage full.");
+    }
+  }
+})();
+</script>
+</body>
+</html>
